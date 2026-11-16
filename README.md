@@ -6,8 +6,8 @@ PostgreSQL 16 database for [CotizaIA](https://github.com/GUERRREROALEXANDER/back
 
 | Path | What it is |
 |---|---|
-| `migrations/V1..V19__*.sql` | Flyway migrations, the source of truth (copied from the backend's `src/main/resources/db/migration`) |
-| `schema.sql` | Full schema dump (`pg_dump --schema-only`) after applying all 19 migrations on real Postgres |
+| `migrations/V1..V27__*.sql` | Flyway migrations, the source of truth (copied from the backend's `src/main/resources/db/migration`; `V24__pgvector.sql` is the PostgreSQL vendor migration from `db/vendor/postgresql`) |
+| `schema.sql` | Full schema (`pg_dump --schema-only --no-owner --no-privileges`) after Flyway applied all 27 migrations |
 
 ## Restore
 
@@ -16,34 +16,79 @@ createdb -U cotizaia cotizaia
 psql -U cotizaia -d cotizaia -v ON_ERROR_STOP=1 -f schema.sql
 ```
 
-Or let the backend create it: `docker compose up -d` then `./mvnw spring-boot:run` and Flyway applies the migrations on startup.
+The last block of `schema.sql` creates `knowledge_vectors_pg` and needs the **pgvector** extension (the
+`pgvector/pgvector:pg16` image in the backend's `docker-compose.yml` has it). Without pgvector, everything before
+that block still restores.
 
-Verified on 2026-10-09: all 19 migrations applied with no error, and `schema.sql` restores cleanly into an empty database (26 tables, including `flyway_schema_history`).
+Or let the backend create it: `docker compose up -d` then `./mvnw spring-boot:run` and Flyway applies the migrations
+on startup.
+
+Verified on 2026-11-15: migrations V1–V19 are byte-identical to the backend's; Flyway applied all 27 on an empty
+database with no error, and `schema.sql` (up to the pgvector block) restores cleanly with `ON_ERROR_STOP=1` into an
+empty database: 32 tables including `flyway_schema_history`, plus `knowledge_vectors_pg` where pgvector is
+installed. The dump has no PostgreSQL 17+ settings, so it also loads on 16.
+
+## Demo data
+
+There are no `INSERT` scripts on purpose: client and agency content (names, emails, brief text, proposal texts,
+PDFs) is encrypted at rest with AES-256-GCM by the application, so rows written by plain SQL would be unreadable to
+the backend. The demo agency (*Estudio Nariño Digital*: catalog, rates, 30 clients, 24 past proposals as memory and
+10 proposals in every lifecycle state) is loaded through the API with `python scripts/seed_demo.py` in the backend
+repository. Login: `demo@estudio-narino.test` / `CotizaIA-demo-2026`.
+
+## Entity-relationship diagram
+
+```mermaid
+erDiagram
+    agencies ||--o{ users : employs
+    agencies ||--o{ clients : serves
+    agencies ||--o{ roles : defines
+    agencies ||--o{ rates : sets
+    agencies ||--o{ service_categories : groups
+    agencies ||--o{ service_catalog : offers
+    agencies ||--o{ knowledge_documents : remembers
+    agencies ||--o{ notifications : receives
+    users ||--o{ refresh_tokens : holds
+    roles ||--o{ rates : priced_by
+    service_categories ||--o{ service_catalog : contains
+    service_catalog ||--o{ requirement_types : lists
+    clients ||--o{ briefs : sends
+    briefs ||--o| brief_attachments : "original PDF"
+    briefs ||--o{ brief_questions : raises
+    briefs ||--o{ extracted_requirements : yields
+    briefs ||--o{ agent_executions : processed_by
+    briefs ||--o{ proposals : quoted_as
+    requirement_types ||--o{ extracted_requirements : classifies
+    agent_executions ||--o{ agent_steps : records
+    proposals ||--o{ quoted_items : prices
+    extracted_requirements ||--o{ quoted_items : priced_in
+    proposals ||--o{ proposal_extras : decorates
+    proposals ||--o{ proposal_status_changes : tracks
+    proposals ||--o{ proposal_commands : "undo history"
+    proposals ||--o{ proposal_documents : "PDF documents"
+    proposals ||--o| schedules : plans
+    proposals ||--o{ proposals : revises
+    proposals ||--o| contracts : becomes
+    proposals ||--o{ payments : deposit
+    proposals ||--o{ notifications : about
+    schedules ||--o{ phases : splits
+    phases ||--o{ phase_dependencies : depends
+    contracts ||--o{ clauses : includes
+    contracts ||--o{ payments : paid_by
+    knowledge_documents ||--o{ knowledge_chunks : chunked
+    knowledge_chunks ||--o| knowledge_vectors : embedding
+    knowledge_chunks ||--o| knowledge_vectors_pg : "pgvector embedding"
+```
 
 ## Tables
 
-- `agencies`
-- `agent_executions`
-- `agent_steps`
-- `brief_questions`
-- `briefs`
-- `clauses`
-- `clients`
-- `contracts`
-- `extracted_requirements`
-- `notifications`
-- `payments`
-- `phase_dependencies`
-- `phases`
-- `proposal_documents`
-- `proposal_extras`
-- `proposals`
-- `proposal_status_changes`
-- `quoted_items`
-- `rates`
-- `requirement_types`
-- `roles`
-- `schedules`
-- `service_catalog`
-- `service_categories`
-- `users`
+| Area | Tables |
+|---|---|
+| Identity | `agencies`, `users`, `refresh_tokens`, `clients` |
+| Configuration | `roles`, `rates`, `service_categories`, `service_catalog`, `requirement_types` |
+| Intake | `briefs`, `brief_attachments`, `brief_questions`, `extracted_requirements` |
+| Agent | `agent_executions`, `agent_steps` |
+| Quotation | `proposals`, `quoted_items`, `proposal_extras`, `proposal_status_changes`, `proposal_commands`, `proposal_documents` |
+| Planning and closing | `schedules`, `phases`, `phase_dependencies`, `contracts`, `clauses`, `payments`, `notifications` |
+| Estimation memory (RAG) | `knowledge_documents`, `knowledge_chunks`, `knowledge_vectors`, `knowledge_vectors_pg` |
+| Flyway | `flyway_schema_history` |
