@@ -1959,10 +1959,11 @@ ALTER TABLE ONLY public.users
 --
 -- knowledge_vectors_pg: PostgreSQL vendor migration V24 (requires the pgvector extension).
 -- Appended by hand because the database used to produce this dump has no pgvector;
--- identical to migrations/V24__pgvector.sql.
+-- same DDL as migrations/V24__pgvector.sql, except that the extension schema is explicit: the dump clears
+-- search_path, so a bare CREATE EXTENSION has no schema to use.
 --
 
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 CREATE TABLE public.knowledge_vectors_pg (
     chunk_id bigint NOT NULL,
