@@ -6,8 +6,8 @@ PostgreSQL 16 database for [CotizaIA](https://github.com/GUERRREROALEXANDER/back
 
 | Path | What it is |
 |---|---|
-| `migrations/V1..V27__*.sql` | Flyway migrations, the source of truth (copied from the backend's `src/main/resources/db/migration`; `V24__pgvector.sql` is the PostgreSQL vendor migration from `db/vendor/postgresql`) |
-| `schema.sql` | Full schema (`pg_dump --schema-only --no-owner --no-privileges`) after Flyway applied all 27 migrations |
+| `migrations/V1..V30__*.sql` | Flyway migrations, the source of truth (copied from the backend's `src/main/resources/db/migration`; `V24__pgvector.sql` is the PostgreSQL vendor migration from `db/vendor/postgresql`) |
+| `schema.sql` | Full schema (`pg_dump --schema-only --no-owner --no-privileges`) after Flyway applied all 30 migrations |
 
 ## Restore
 
@@ -23,10 +23,13 @@ that block still restores.
 Or let the backend create it: `docker compose up -d` then `./mvnw spring-boot:run` and Flyway applies the migrations
 on startup.
 
-Verified on 2026-11-15: migrations V1–V19 are byte-identical to the backend's; Flyway applied all 27 on an empty
-database with no error, and `schema.sql` (up to the pgvector block) restores cleanly with `ON_ERROR_STOP=1` into an
-empty database: 32 tables including `flyway_schema_history`, plus `knowledge_vectors_pg` where pgvector is
-installed. The dump has no PostgreSQL 17+ settings, so it also loads on 16.
+Verified on 2026-11-20: migrations V1–V30 are byte-identical to the backend's; Flyway 11 applied all 30 on an
+empty `pgvector/pgvector:pg16` database (PostgreSQL 16.16) with no error, and `schema.sql` restores cleanly with
+`ON_ERROR_STOP=1` into an empty database: 36 tables including `flyway_schema_history` and `knowledge_vectors_pg`.
+On PostgreSQL without pgvector, everything before the last block restores (35 tables). The dump has no PostgreSQL
+17+ settings (`transaction_timeout` removed), so it loads on 16. The pgvector block now names its schema
+(`CREATE EXTENSION ... WITH SCHEMA public`): the dump clears `search_path`, so the previous bare `CREATE EXTENSION`
+stopped the restore with "no schema has been selected to create in".
 
 ## Demo data
 
@@ -49,6 +52,7 @@ erDiagram
     agencies ||--o{ knowledge_documents : remembers
     agencies ||--o{ notifications : receives
     users ||--o{ refresh_tokens : holds
+    users ||--o{ email_verification_tokens : verifies
     roles ||--o{ rates : priced_by
     service_categories ||--o{ service_catalog : contains
     service_catalog ||--o{ requirement_types : lists
@@ -58,6 +62,7 @@ erDiagram
     briefs ||--o{ extracted_requirements : yields
     briefs ||--o{ agent_executions : processed_by
     briefs ||--o{ proposals : quoted_as
+    briefs ||--o{ gmail_ingested_messages : "from Gmail"
     requirement_types ||--o{ extracted_requirements : classifies
     agent_executions ||--o{ agent_steps : records
     proposals ||--o{ quoted_items : prices
@@ -84,9 +89,9 @@ erDiagram
 
 | Area | Tables |
 |---|---|
-| Identity | `agencies`, `users`, `refresh_tokens`, `clients` |
+| Identity | `agencies`, `users`, `refresh_tokens`, `email_verification_tokens`, `clients` |
 | Configuration | `roles`, `rates`, `service_categories`, `service_catalog`, `requirement_types` |
-| Intake | `briefs`, `brief_attachments`, `brief_questions`, `extracted_requirements` |
+| Intake | `briefs`, `brief_attachments`, `brief_questions`, `extracted_requirements`, `gmail_ingested_messages`, `gmail_sync_state` |
 | Agent | `agent_executions`, `agent_steps` |
 | Quotation | `proposals`, `quoted_items`, `proposal_extras`, `proposal_status_changes`, `proposal_commands`, `proposal_documents` |
 | Planning and closing | `schedules`, `phases`, `phase_dependencies`, `contracts`, `clauses`, `payments`, `notifications` |
